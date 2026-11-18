@@ -1,0 +1,808 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BotBrain replay</title>
+<style>
+:root {
+  --bg: #0e1116; --panel: #161b22; --panel2: #1c232d; --line: #2a323d; --text: #e6e9ee; --dim: #8b95a3;
+  --accent: #6cb6ff; --good: #4ade80; --bad: #f87171; --warn: #fbbf24;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; display: grid; grid-template-rows: auto 1fr auto; overflow: hidden; }
+header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header strong { font-size: 14px; }
+#meta { color: var(--dim); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button, select { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; }
+button:hover, select:hover { border-color: var(--accent); }
+button.on { background: #23364d; border-color: var(--accent); }
+main { display: grid; grid-template-columns: 1fr 380px; min-height: 0; }
+#stage { position: relative; min-width: 0; min-height: 0; }
+#view { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+#view.dragging { cursor: grabbing; }
+#feed { position: absolute; left: 10px; top: 10px; pointer-events: none; display: flex; flex-direction: column; gap: 2px; }
+#feed div { background: rgba(14,17,22,.78); padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+#hint { position: absolute; right: 10px; bottom: 8px; color: var(--dim); font-size: 11px; pointer-events: none; text-align: right; }
+#drop { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center; text-align: center; color: var(--dim); padding: 24px; }
+#drop.over { outline: 2px dashed var(--accent); outline-offset: -12px; color: var(--text); }
+#drop h2 { margin: 0; color: var(--text); font-weight: 600; }
+aside { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; min-height: 0; }
+aside section { padding: 10px 12px; border-bottom: 1px solid var(--line); }
+aside h3 { margin: 0 0 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
+.name { font-size: 16px; font-weight: 600; }
+.tag { display: inline-block; padding: 0 6px; border-radius: 9px; font-size: 11px; border: 1px solid var(--line); color: var(--dim); margin-left: 6px; vertical-align: 2px; }
+.kv { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px 10px; margin-top: 8px; }
+.kv div { min-width: 0; }
+.kv span { display: block; color: var(--dim); font-size: 11px; }
+.kv b { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pad { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
+.pad canvas { width: 64px; height: 64px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line); color: var(--dim); font-size: 11px; }
+.chip.on { background: #3b2a12; color: var(--warn); border-color: #6b4d1a; }
+.chart { width: 100%; height: 92px; display: block; margin-bottom: 6px; }
+.chart.small { height: 64px; }
+.legend { color: var(--dim); font-size: 11px; margin: -2px 0 8px; }
+.legend i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin: 0 4px 0 8px; }
+.legend i:first-child { margin-left: 0; }
+.row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.row label { color: var(--dim); font-size: 11px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: 3px 4px; text-align: right; white-space: nowrap; }
+th { color: var(--dim); font-weight: 500; font-size: 11px; position: sticky; top: 0; background: var(--panel); cursor: default; }
+th:first-child, td:first-child { text-align: left; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--panel2); }
+tbody tr.sel { background: #23364d; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.dot.human { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px #fff; }
+footer { background: var(--panel); border-top: 1px solid var(--line); padding: 6px 12px 8px; }
+#timeline { width: 100%; height: 34px; display: block; cursor: pointer; }
+.bar { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+#clock { font-variant-numeric: tabular-nums; min-width: 150px; }
+.spacer { flex: 1; }
+.empty { color: var(--dim); }
+</style>
+</head>
+<body>
+<header>
+  <strong>BotBrain replay</strong>
+  <span id="meta">No recording open</span>
+  <button id="open">Open recording…</button>
+  <input type="file" id="file" accept=".bbrec" hidden>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="feed"></div>
+    <div id="hint"></div>
+    <div id="drop">
+      <h2>Drop a recording here</h2>
+      <div>A <code>.bbrec</code> file from the brain's recording folder, or use “Open recording…”.</div>
+      <div id="status"></div>
+    </div>
+  </div>
+  <aside>
+    <section id="selected"><h3>Player</h3><div class="empty">Click a player on the map or in the table.</div></section>
+    <section id="charts" hidden>
+      <div class="row"><h3 style="margin:0;flex:1">Around this moment (±6 s)</h3>
+        <label for="smooth">measured over</label>
+        <select id="smooth"><option value="0.05">0.1 s</option><option value="0.1" selected>0.2 s</option><option value="0.2">0.4 s</option></select></div>
+      <canvas class="chart" id="cTurn"></canvas>
+      <div class="legend"><i style="background:#6cb6ff"></i>turn rate, °/s<span id="lgCmd"><i style="background:#f59e0b"></i>what the stick asked for</span></div>
+      <canvas class="chart small" id="cSpeed"></canvas>
+      <div class="legend"><i style="background:#4ade80"></i>speed, m/s</div>
+      <div id="stickBox">
+        <canvas class="chart small" id="cStick"></canvas>
+        <div class="legend"><i style="background:#6cb6ff"></i>look stick, sideways<i style="background:#c084fc"></i>look stick, up and down<i style="background:#f87171"></i>trigger held</div>
+      </div>
+    </section>
+    <section id="histBox" hidden>
+      <div class="row"><h3 style="margin:0;flex:1">How fast they turn, whole match</h3>
+        <label for="compare">against</label><select id="compare"></select></div>
+      <canvas class="chart" id="cHist"></canvas>
+      <div class="legend"><i style="background:#6cb6ff"></i><span id="lgSel">selected</span><i style="background:#fbbf24"></i><span id="lgCmp">comparison</span> · share of time alive, by turn rate</div>
+    </section>
+    <section id="board" hidden>
+      <h3>Players</h3>
+      <table><thead><tr><th>Name</th><th title="Kills">K</th><th title="Deaths">D</th><th title="Shots fired, as the body reported them">Shots</th><th title="Hits on someone per shot fired">Hit</th><th title="Share of time alive spent standing still">Still</th><th title="Average speed while alive, m/s">m/s</th><th title="Average turn rate while alive, degrees a second">°/s</th></tr></thead><tbody id="rows"></tbody></table>
+    </section>
+  </aside>
+</main>
+<footer>
+  <canvas id="timeline"></canvas>
+  <div class="bar">
+    <button id="play" title="Space">Play</button>
+    <button id="back" title="Left arrow: one frame. Shift: one second.">◀</button>
+    <button id="fwd" title="Right arrow: one frame. Shift: one second.">▶</button>
+    <select id="rate" title="Playback speed"><option value="0.1">0.1×</option><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>
+    <span id="clock">0:00.0</span>
+    <span class="spacer"></span>
+    <button id="tFollow" class="on" title="F: keep the selected player in the middle">Follow</button>
+    <button id="tCones" class="on" title="What each player can see in front of them">View cones</button>
+    <button id="tNames" title="Show names next to players">Names</button>
+    <button id="tTrail" class="on" title="Where the selected player has been in the last 15 seconds">Trail</button>
+    <button id="tPoints" class="on" title="Spawns, the points bots roam between (grey diamonds), the spots campers wait at (blue triangles), and the places each team last met the enemy (small crosses in the team's colour, fading with age)">Map points</button>
+    <button id="tFloors" title="Maps with more than one floor: show all floors (two-floor places tinted violet, players on a lower floor ringed dark), only the upper floors, or only the lower ones (players on the other floor faded)" hidden>Floors: all</button>
+    <button id="fit" title="Show the whole map">Whole map</button>
+  </div>
+</footer>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const TEAM = ['#4da3ff', '#ff8a4d', '#7ddc6f', '#e06bd6', '#e5d15a', '#5fd6c8'];
+const GOAL = { None: '#6b7280', Engage: '#ef4444', Investigate: '#f59e0b', GoZone: '#14b8a6', Hold: '#a78bfa', Roam: '#3f9f63', Hunt: '#e879f9', Camp: '#38bdf8', Objective: '#2dd4bf' };
+const GOAL_TEXT = { None: 'nothing', Engage: 'fighting', Investigate: 'checking where an enemy was', GoZone: 'going to an objective', Hold: 'holding a position', Roam: 'roaming', Hunt: 'hunting', Camp: 'camping', Objective: 'playing the objective' };
+const ROLE_TEXT = { Seeker: 'plays for kills', Defender: 'defender', Attacker: 'attacker' };
+const HUNT_TEXT = { Revenge: 'going back for its killer', Gunfire: 'heading for gunfire it heard' };
+const ALIVE = 1, HUMAN = 2, FIRING = 64;
+const EV_DAMAGE = 1, EV_DEATH = 2, EV_SHOT = 3;
+const WINDOW = 6;
+
+let R = null;            // the open recording
+let cur = 0;             // playback time, seconds from the first frame
+let playing = false, dirty = true, lastStamp = 0;
+let sel = null, cmp = null;
+let cam = { x: 0, y: 0, zoom: 2 };
+let opts = { follow: true, cones: true, names: false, trail: true, points: true, floor: 'all' };
+let half = 0.1;
+let detailFrame = -1, detail = new Map();
+
+// ---------- loading ----------
+
+async function inflate(blob) {
+  const reader = blob.stream().pipeThrough(new DecompressionStream('gzip')).getReader();
+  const chunks = []; let total = 0, cut = false;
+  try {
+    for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); total += value.length; }
+  } catch (e) { cut = true; }       // a match still being written, or a server that was killed
+  const out = new Uint8Array(total); let o = 0;
+  for (const c of chunks) { out.set(c, o); o += c.length; }
+  return { bytes: out, cut };
+}
+
+function parse(bytes, cut, name) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const u16 = o => dv.getUint16(o, true), u32 = o => dv.getUint32(o, true), i16 = o => dv.getInt16(o, true), f32 = o => dv.getFloat32(o, true);
+  const text = (o, n) => new TextDecoder().decode(bytes.subarray(o, o + n));
+  if (bytes.length < 12 || u32(0) !== 0x43524242) throw new Error('This is not a BotBrain recording.');
+  if (u32(4) !== 1) throw new Error('This recording is version ' + u32(4) + '; this viewer reads version 1.');
+  const hl = u32(8), header = JSON.parse(text(12, hl)), m = header.map;
+  let o = 12 + hl;
+  const raster = bytes.subarray(o, o + m.width * m.height); o += m.width * m.height;
+  const frameAt = [], ticks = [], times = [], agents = {}, events = [], contacts = [], hunts = [], camps = [], roles = []; let objectives = [], lower = null;
+  while (o + 5 <= bytes.length) {
+    const kind = bytes[o], len = u32(o + 1), p = o + 5;
+    if (p + len > bytes.length) { cut = true; break; }
+    if (kind === 1) { const a = JSON.parse(text(p, len)); agents[a.slot] = a; }
+    else if (kind === 2) objectives = JSON.parse(text(p, len)).objectives || [];
+    else if (kind === 5) contacts.push(JSON.parse(text(p, len)));
+    else if (kind === 6) hunts.push(JSON.parse(text(p, len)));
+    else if (kind === 7) camps.push(JSON.parse(text(p, len)));
+    else if (kind === 8) roles.push(JSON.parse(text(p, len)));
+    else if (kind === 9) lower = bytes.subarray(p, p + len);
+    else if (kind === 3) { frameAt.push(p); ticks.push(u32(p)); times.push(u32(p + 4) / 1000); }
+    else if (kind === 4) {
+      const tick = u32(p), n = u16(p + 4);
+      for (let i = 0; i < n; i++) { const q = p + 6 + i * 29; events.push({ tick, kind: bytes[q], a: u32(q + 1), b: u32(q + 5), c: u32(q + 9), x: f32(q + 13), y: f32(q + 17), z: f32(q + 21), value: f32(q + 25) }); }
+    }
+    o = p + len;
+  }
+  const F = frameAt.length;
+  if (F < 2) throw new Error('This recording has no frames in it yet.');
+  const t = new Float64Array(F); for (let f = 0; f < F; f++) t[f] = times[f] - times[0];
+  const step = (t[F - 1] - t[0]) / (F - 1);
+
+  const byId = new Map(), ents = [], agentsAt = new Uint32Array(F);
+  for (let f = 0; f < F; f++) {
+    let q = frameAt[f] + 8; const n = u16(q); q += 2;
+    for (let i = 0; i < n; i++, q += 29) {
+      const id = u32(q); let e = byId.get(id);
+      if (!e) {
+        e = { id, kind: bytes[q + 4], team: bytes[q + 5], slot: null, human: false, x: new Float32Array(F).fill(NaN), y: new Float32Array(F).fill(NaN), z: new Float32Array(F), yaw: new Float32Array(F), pitch: new Float32Array(F), flags: new Uint16Array(F), health: new Uint8Array(F), seen: new Uint8Array(F) };
+        byId.set(id, e); ents.push(e);
+      }
+      e.team = bytes[q + 5]; e.flags[f] = u16(q + 6); e.x[f] = f32(q + 8); e.y[f] = f32(q + 12); e.z[f] = f32(q + 16); e.yaw[f] = f32(q + 20); e.pitch[f] = f32(q + 24); e.health[f] = bytes[q + 28]; e.seen[f] = 1;
+      if (e.flags[f] & HUMAN) e.human = true;
+    }
+    agentsAt[f] = q;
+    const na = u16(q); q += 2;
+    for (let i = 0; i < na; i++) {
+      const e = byId.get(u32(q + 2));
+      if (e) {
+        if (e.slot === null) { e.slot = u16(q); e.goal = new Uint8Array(F); e.tier = new Uint8Array(F); e.mx = new Int16Array(F); e.my = new Int16Array(F); e.lx = new Int16Array(F); e.ly = new Int16Array(F); e.held = new Uint32Array(F); }
+        e.goal[f] = bytes[q + 6]; e.tier[f] = bytes[q + 7]; e.mx[f] = i16(q + 12); e.my[f] = i16(q + 14); e.lx[f] = i16(q + 16); e.ly[f] = i16(q + 18); e.held[f] = u32(q + 20);
+      }
+      q += 55 + bytes[q + 54] * 17;
+    }
+  }
+  for (const e of ents) {
+    const a = e.slot !== null ? agents[e.slot] : null;
+    e.agent = a;
+    e.name = a ? a.name : e.human ? 'Player ' + e.id : 'Entity ' + e.id;
+    e.bot = !!a;
+  }
+  const frameOfTick = tick => { let lo = 0, hi = F - 1; while (lo < hi) { const mid = (lo + hi) >> 1; if (ticks[mid] < tick) lo = mid + 1; else hi = mid; } return lo; };
+  for (const ev of events) { ev.f = frameOfTick(ev.tick); ev.t = t[ev.f]; }
+  for (const c of contacts) c.t = t[frameOfTick(c.tick)];
+  for (const h of hunts) h.t = t[frameOfTick(h.tick)];
+  for (const c of camps) c.t = t[frameOfTick(c.tick)];
+  for (const r of roles) r.t = t[frameOfTick(r.tick)];
+  // Each objective's owner and progress over time, from its objective events (kind 5).
+  for (const ob of objectives) { ob.track = [{ t: 0, owner: ob.owner_team, progress: ob.progress }]; }
+  for (const e of events) if (e.kind === 5) { const ob = objectives.find(q => q.id === e.a); if (ob) ob.track.push({ t: t[frameOfTick(e.tick)], owner: e.b, progress: e.value }); }
+  events.sort((a, b) => a.t - b.t);
+  return { name, header, map: m, raster, lower, bytes, dv, frameAt, agentsAt, ticks, t, F, step, duration: t[F - 1], agents, objectives, events, contacts, hunts, camps, roles, ents, byId, cut,
+    players: ents.filter(e => e.kind === 0), deaths: events.filter(e => e.kind === EV_DEATH), fireBit: 1 << Math.max(0, (header.actions || []).indexOf('fire')) };
+}
+
+// ---------- measures ----------
+
+const wrap = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+const span = h => Math.max(1, Math.round(h / R.step));
+const aliveAt = (e, f) => e.seen[f] && (e.flags[f] & ALIVE);
+
+/** Frames either side of f to measure a rate over, or null where the player was not alive throughout. */
+function around(e, f, k) {
+  const a = Math.max(0, f - k), b = Math.min(R.F - 1, f + k);
+  if (a === b || !aliveAt(e, a) || !aliveAt(e, b) || !aliveAt(e, f)) return null;
+  return [a, b];
+}
+function turnAt(e, f, k) { const w = around(e, f, k); return w ? wrap(e.yaw[w[1]] - e.yaw[w[0]]) / (R.t[w[1]] - R.t[w[0]]) * 180 / Math.PI : NaN; }
+function speedAt(e, f, k) { const w = around(e, f, k); return w ? Math.hypot(e.x[w[1]] - e.x[w[0]], e.y[w[1]] - e.y[w[0]]) / (R.t[w[1]] - R.t[w[0]]) : NaN; }
+/** The turn rate a look-stick position asks for, by the body's own curve. Stick right turns right, which lowers yaw. */
+function asked(e, f) {
+  const look = R.header.look || { max_turn_deg_s: 220, deadzone: 0.1, curve_exponent: 2 };
+  const s = e.lx[f] / 32767, a = Math.abs(s);
+  if (a <= look.deadzone) return 0;
+  return -Math.sign(s) * look.max_turn_deg_s * Math.pow(Math.min(1, (a - look.deadzone) / (1 - look.deadzone)), look.curve_exponent);
+}
+
+function measure() {
+  const k = span(0.15), kt = span(0.1);
+  for (const e of R.players) {
+    const s = e.stats = { kills: 0, deaths: 0, shots: 0, hits: 0, alive: 0, still: 0, distance: 0, turn: 0, turnN: 0, hist: new Float64Array(32), goals: {} };
+    for (let f = 1; f < R.F; f++) {
+      if (!aliveAt(e, f) || !aliveAt(e, f - 1)) continue;
+      const dt = R.t[f] - R.t[f - 1], d = Math.hypot(e.x[f] - e.x[f - 1], e.y[f] - e.y[f - 1]);
+      s.alive += dt; if (d < 20) s.distance += d;
+      const v = speedAt(e, f, k); if (v < 0.3) s.still += dt;
+      const w = Math.abs(turnAt(e, f, kt));
+      if (!isNaN(w)) { s.turn += w * dt; s.turnN += dt; s.hist[Math.min(31, Math.floor(w / 10))] += dt; }
+      if (e.bot) { const g = R.header.goals[e.goal[f]]; s.goals[g] = (s.goals[g] || 0) + dt; }
+    }
+  }
+  for (const ev of R.events) {
+    const a = R.byId.get(ev.a), b = R.byId.get(ev.b);
+    if (ev.kind === EV_SHOT && a && a.stats) a.stats.shots++;
+    if (ev.kind === EV_DAMAGE && b && b.stats && b !== a) b.stats.hits++;
+    if (ev.kind === EV_DEATH) { if (a && a.stats) a.stats.deaths++; if (b && b.stats && b !== a) b.stats.kills++; }
+  }
+}
+
+// ---------- the open recording ----------
+
+async function openBlob(blob, name) {
+  $('status').textContent = 'Reading ' + name + '…';
+  try {
+    const { bytes, cut } = await inflate(blob);
+    R = parse(bytes, cut, name);
+  } catch (e) { $('status').textContent = e.message || String(e); return; }
+  measure();
+  cur = 0; playing = false; sel = null; detailFrame = -1;
+  mapImage = buildMapImage();
+  $('drop').hidden = true;
+  const h = R.header, people = R.players.filter(e => e.human).length, bots = R.players.filter(e => e.bot).length;
+  $('meta').textContent = `${h.title} ${h.build} · ${R.map.id} · ${fmt(R.duration)} · ${bots} ${bots === 1 ? 'bot' : 'bots'}, ${people} ${people === 1 ? 'person' : 'people'} · ${Math.round(1 / R.step)} frames a second` + (R.cut ? ' · the file ends early (match still running, or the server was stopped)' : '');
+  document.title = name + ' · BotBrain replay';
+  buildBoard(); buildCompare(); showSelected(); fit(); syncButtons(); dirty = true;
+}
+
+const fmt = s => { const tenths = Math.round(Math.max(0, s) * 10), m = Math.floor(tenths / 600); return m + ':' + ((tenths - m * 600) / 10).toFixed(1).padStart(4, '0'); };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const pct = (a, b) => b > 0 ? Math.round(100 * a / b) + '%' : '–';
+
+function frameAtTime(time) {
+  let lo = 0, hi = R.F - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (R.t[mid] <= time) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+
+function buildBoard() {
+  const rows = $('rows'); rows.textContent = '';
+  const list = [...R.players].sort((a, b) => a.team - b.team || b.stats.kills - a.stats.kills || a.name.localeCompare(b.name));
+  for (const e of list) {
+    const s = e.stats, tr = document.createElement('tr');
+    tr.dataset.id = e.id;
+    tr.innerHTML = `<td title="${esc(e.name)}${e.human ? ' (a person)' : ''}"><span class="dot${e.human ? ' human' : ''}" style="background:${TEAM[e.team % TEAM.length]}"></span>${esc(e.name)}</td><td>${s.kills}</td><td>${s.deaths}</td><td>${s.shots || '–'}</td><td>${pct(s.hits, s.shots)}</td><td>${pct(s.still, s.alive)}</td><td>${s.alive ? (s.distance / s.alive).toFixed(1) : '–'}</td><td>${s.turnN ? Math.round(s.turn / s.turnN) : '–'}</td>`;
+    tr.onclick = () => { opts.follow = true; syncButtons(); select(e); };
+    rows.appendChild(tr);
+  }
+  $('board').hidden = false;
+}
+
+function buildCompare() {
+  const c = $('compare'); c.textContent = '';
+  c.appendChild(new Option('nobody', ''));
+  c.appendChild(new Option('all people', 'people'));
+  c.appendChild(new Option('all bots', 'bots'));
+  for (const e of [...R.players].sort((a, b) => (b.human - a.human) || a.name.localeCompare(b.name))) c.appendChild(new Option((e.human ? '● ' : '') + e.name, e.id));
+  c.value = R.players.some(e => e.human) ? 'people' : 'bots';
+  cmp = c.value; $('lgCmp').textContent = c.selectedOptions[0].text;
+}
+
+function select(e) {
+  sel = e; dirty = true;
+  for (const tr of $('rows').children) tr.classList.toggle('sel', !!e && +tr.dataset.id === e.id);
+  showSelected();
+}
+
+function showSelected() {
+  const box = $('selected');
+  $('charts').hidden = $('histBox').hidden = !sel;
+  if (!sel) { box.innerHTML = '<h3>Player</h3><div class="empty">Click a player on the map or in the table.</div>'; return; }
+  const p = sel.agent && sel.agent.persona, s = sel.stats;
+  let html = `<h3>Player</h3><div><span class="dot${sel.human ? ' human' : ''}" style="background:${TEAM[sel.team % TEAM.length]}"></span><span class="name">${esc(sel.name)}</span><span class="tag">${sel.bot ? 'bot' : sel.human ? 'person' : 'unknown'}</span><span class="tag">team ${sel.team}</span></div>`;
+  html += `<div class="kv"><div><span>Now</span><b id="vState">–</b></div><div><span>Health</span><b id="vHealth">–</b></div><div><span>Speed</span><b id="vSpeed">–</b></div><div><span>Turning</span><b id="vTurn">–</b></div>${R.lower ? '<div style="grid-column:1 / -1" title="Height of the feet, and which floor where the place has two"><span>Floor</span><b id="vFloor">–</b></div>' : ''}</div>`;
+  if (sel.bot) {
+    html += `<div class="kv"><div style="grid-column:1 / -1"><span>Doing</span><b id="vGoal">–</b></div><div><span>Target</span><b id="vTarget">–</b></div><div><span>Effort</span><b id="vTier">–</b></div><div style="grid-column:1 / -1" title="Objective modes: what this bot is in the match for, and the objective it plays"><span>Role</span><b id="vRole">–</b></div></div>`;
+    html += `<div class="pad"><canvas id="pMove" title="Move stick"></canvas><canvas id="pLook" title="Look stick"></canvas><div><div class="chips" id="vHeld"></div><div class="legend" style="margin:6px 0 0">move stick · look stick · <span id="vAmmo"></span></div></div></div>`;
+    if (p) html += `<div class="kv" title="This bot's persona: fixed for the match"><div><span>Skill</span><b>${p.skill.toFixed(1)}</b></div><div><span>Reaction</span><b>${Math.round(p.reaction * 1000)} ms</b></div><div><span>Aim time</span><b>${Math.round(p.aim_time_constant * 1000)} ms</b></div><div><span>Aim error</span><b>${Math.round(p.aim_noise * 100)}%</b></div><div><span>Aggression</span><b>${p.aggression.toFixed(2)}</b></div><div><span>Strafing</span><b>${p.strafe_habit.toFixed(2)}</b></div><div><span>Memory</span><b>${p.memory_seconds.toFixed(0)} s</b></div><div><span>Likes range</span><b>${p.preferred_range.toFixed(0)} m</b></div></div>`;
+    const total = Object.values(s.goals).reduce((a, b) => a + b, 0);
+    if (total > 0) html += `<div class="legend" style="margin-top:8px">Whole match: ${Object.entries(s.goals).sort((a, b) => b[1] - a[1]).map(([g, v]) => `<i style="background:${GOAL[g] || '#888'};height:8px"></i>${GOAL_TEXT[g] || g} ${Math.round(100 * v / total)}%`).join('')}</div>`;
+  }
+  box.innerHTML = html;
+  $('stickBox').hidden = $('lgCmd').hidden = !sel.bot;
+  $('lgSel').textContent = sel.name;
+  resizeAll();
+}
+
+// ---------- the map ----------
+
+let mapImage = null;
+function buildMapImage() {
+  const W = R.map.width, H = R.map.height, c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d'), img = g.createImageData(W, H), d = img.data;
+  // Maps with more than one floor: the lower floor where one is asked for and there is one; two-floor places tinted when showing all.
+  const under = R.lower, mode = under ? opts.floor : 'all';
+  for (let cy = 0; cy < H; cy++) {
+    const row = H - 1 - cy;
+    for (let cx = 0; cx < W; cx++) {
+      const k = cy * W + cx, two = under && under[k] > 0;
+      const v = mode === 'lower' && two ? under[k] : R.raster[k], i = (row * W + cx) * 4;
+      if (v === 0) { d[i] = 14; d[i + 1] = 17; d[i + 2] = 22; }
+      else if (two && mode === 'all') { const l = 46 + v / 255 * 62; d[i] = l * 1.08; d[i + 1] = l * 0.82; d[i + 2] = l * 1.25; }
+      else { const l = 46 + v / 255 * 62; d[i] = l * 0.94; d[i + 1] = l; d[i + 2] = l * 1.07; }
+      d[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
+/** The map's height for a raster byte (the recording's height scale). */
+function heightOf(v) { const m = R.map; return m.ground_low + (v - 1) / 254 * (m.ground_high - m.ground_low); }
+
+/** Which floor a player at x, y, z stands on: 'upper' or 'lower' where the place has two, else null. */
+function floorOf(x, y, z) {
+  if (!R.lower) return null;
+  const m = R.map, cx = Math.floor((x - m.origin_x) / m.cell), cy = Math.floor((y - m.origin_y) / m.cell);
+  if (cx < 0 || cy < 0 || cx >= m.width || cy >= m.height) return null;
+  const k = cy * m.width + cx;
+  if (!R.lower[k] || !R.raster[k]) return null;
+  return Math.abs(z - heightOf(R.lower[k])) < Math.abs(z - heightOf(R.raster[k])) ? 'lower' : 'upper';
+}
+
+const view = $('view'), vx = view.getContext('2d');
+let vw = 0, vh = 0;
+const SX = x => (x - cam.x) * cam.zoom + vw / 2, SY = y => vh / 2 - (y - cam.y) * cam.zoom;
+const WX = sx => (sx - vw / 2) / cam.zoom + cam.x, WY = sy => (vh / 2 - sy) / cam.zoom + cam.y;
+
+function fit() {
+  if (!R) return;
+  const W = R.map.width, H = R.map.height; let x0 = W, x1 = -1, y0 = H, y1 = -1;
+  for (let cy = 0; cy < H; cy++) for (let cx = 0; cx < W; cx++) if (R.raster[cy * W + cx]) { if (cx < x0) x0 = cx; if (cx > x1) x1 = cx; if (cy < y0) y0 = cy; if (cy > y1) y1 = cy; }
+  if (x1 < 0) { x0 = y0 = 0; x1 = W - 1; y1 = H - 1; }
+  const c = R.map.cell, wx0 = R.map.origin_x + x0 * c, wx1 = R.map.origin_x + (x1 + 1) * c, wy0 = R.map.origin_y + y0 * c, wy1 = R.map.origin_y + (y1 + 1) * c;
+  cam.x = (wx0 + wx1) / 2; cam.y = (wy0 + wy1) / 2;
+  cam.zoom = Math.max(0.2, Math.min((vw - 40) / (wx1 - wx0), (vh - 40) / (wy1 - wy0)));
+  opts.follow = false; syncButtons(); dirty = true;
+}
+
+/** Where a player is at a moment between two frames. */
+function at(e, f, a) {
+  if (!e.seen[f]) return null;
+  let x = e.x[f], y = e.y[f], yaw = e.yaw[f];
+  const g = f + 1, alive = !!(e.flags[f] & ALIVE);
+  if (a > 0 && g < R.F && alive && aliveAt(e, g)) {
+    const dx = e.x[g] - x, dy = e.y[g] - y;
+    if (dx * dx + dy * dy < 25) { x += dx * a; y += dy * a; yaw += wrap(e.yaw[g] - yaw) * a; }
+  }
+  return { x, y, yaw, alive };
+}
+
+/** The last entry of a time-sorted list at or before a moment. */
+function latestBefore(list, time) {
+  let lo = 0, hi = list.length - 1, best = null;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (list[mid].t <= time) { best = list[mid]; lo = mid + 1; } else hi = mid - 1; }
+  return best;
+}
+
+/** The entry of a time-sorted per-bot list (hunts, camps) a bot most recently started. */
+function lastFor(list, e, time) {
+  if (!e.bot || !e.agent) return null;
+  let found = null;
+  for (const h of list) { if (h.t > time) break; if (h.slot === e.agent.slot) found = h; }
+  return found;
+}
+function huntOf(e, time) { return lastFor(R.hunts, e, time); }
+
+/** Everything the brain said about each bot in one frame. */
+function details(f) {
+  if (f === detailFrame) return detail;
+  detail = new Map(); detailFrame = f;
+  const { dv, bytes } = R, f32 = o => dv.getFloat32(o, true);
+  let q = R.agentsAt[f]; const n = dv.getUint16(q, true); q += 2;
+  for (let i = 0; i < n; i++) {
+    const nt = bytes[q + 54], tracks = [];
+    for (let k = 0; k < nt; k++) { const w = q + 55 + k * 17; tracks.push({ entity: dv.getUint32(w, true), state: bytes[w + 4], x: f32(w + 5), y: f32(w + 9), age: f32(w + 13) }); }
+    detail.set(dv.getUint32(q + 2, true), { goal: bytes[q + 6], tier: bytes[q + 7], target: dv.getUint32(q + 8, true), ammo: dv.getUint16(q + 24, true), steer: [f32(q + 26), f32(q + 30)], dest: [f32(q + 34), f32(q + 38)], look: [f32(q + 42), f32(q + 46), f32(q + 50)], tracks });
+    q += 55 + nt * 17;
+  }
+  return detail;
+}
+
+function drawMap() {
+  vx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  vx.fillStyle = '#0e1116'; vx.fillRect(0, 0, vw, vh);
+  if (!R) return;
+  const f = frameAtTime(cur), a = f + 1 < R.F ? Math.min(1, (cur - R.t[f]) / Math.max(1e-6, R.t[f + 1] - R.t[f])) : 0;
+  const z = cam.zoom, m = R.map;
+  if (opts.follow && sel) { const p = at(sel, f, a); if (p) { cam.x = p.x; cam.y = p.y; } }
+  vx.imageSmoothingEnabled = z < 2;
+  vx.drawImage(mapImage, SX(m.origin_x), SY(m.origin_y + m.height * m.cell), m.width * m.cell * z, m.height * m.cell * z);
+  vx.font = '11px system-ui, sans-serif'; vx.textBaseline = 'middle';
+
+  if (opts.points) {
+    for (const p of m.points) {
+      const x = SX(p.x), y = SY(p.y);
+      if (p.kind === 'Spawn') { vx.strokeStyle = TEAM[p.team % TEAM.length]; vx.globalAlpha = 0.7; vx.strokeRect(x - 4, y - 4, 8, 8); }
+      else if (p.kind === 'Vantage') { vx.strokeStyle = GOAL.Camp; vx.globalAlpha = 0.7; vx.beginPath(); vx.moveTo(x, y - 6); vx.lineTo(x + 5, y + 4); vx.lineTo(x - 5, y + 4); vx.closePath(); vx.stroke(); }
+      else { vx.strokeStyle = '#9aa4b2'; vx.globalAlpha = 0.5; vx.beginPath(); vx.moveTo(x, y - 5); vx.lineTo(x + 5, y); vx.lineTo(x, y + 5); vx.lineTo(x - 5, y); vx.closePath(); vx.stroke(); }
+    }
+    vx.globalAlpha = 1;
+    // where each team believes the enemy has lately been
+    const known = latestBefore(R.contacts, cur);
+    if (known) for (const c of known.contacts) {
+      const age = c.age + (cur - known.t); if (age > 60) continue;
+      const x = SX(c.x), y = SY(c.y);
+      vx.strokeStyle = TEAM[c.team % TEAM.length]; vx.globalAlpha = Math.max(0.15, 0.8 * Math.exp(-age / 25)); vx.lineWidth = 2;
+      vx.beginPath(); vx.moveTo(x - 4, y - 4); vx.lineTo(x + 4, y + 4); vx.moveTo(x + 4, y - 4); vx.lineTo(x - 4, y + 4); vx.stroke();
+    }
+    vx.globalAlpha = 1; vx.lineWidth = 1;
+    for (const ob of R.objectives) {
+      // Its owner's colour at this moment; a solid ring while a claim on it is running down.
+      let now = ob.track[0]; for (const s of ob.track) { if (s.t <= cur) now = s; else break; }
+      const owned = now.owner != null && now.owner !== 255;
+      vx.strokeStyle = owned ? TEAM[now.owner % TEAM.length] : '#14b8a6'; vx.lineWidth = ob.primitive === 'interact' ? 2 : 1;
+      if (!(ob.primitive === 'interact' && now.progress < 0.999)) vx.setLineDash([6, 4]);
+      vx.beginPath(); vx.arc(SX(ob.x), SY(ob.y), Math.max(7, (ob.radius || 5) * z), 0, 7); vx.stroke(); vx.setLineDash([]); vx.lineWidth = 1;
+      if (ob.primitive === 'interact') { vx.fillStyle = vx.strokeStyle; vx.font = '11px system-ui'; vx.fillText(String(ob.id) + (now.progress < 0.999 ? ` ${Math.round(now.progress * 100)}%` : ''), SX(ob.x) + 9, SY(ob.y) - 9); }
+    }
+  }
+
+  const det = details(f), size = Math.max(3.5, Math.min(9, 0.45 * z));
+  // the selected player's trail, plan and beliefs go under everyone
+  if (sel) {
+    const p = at(sel, f, a);
+    if (opts.trail) {
+      const f0 = frameAtTime(cur - 15); vx.strokeStyle = TEAM[sel.team % TEAM.length]; vx.lineWidth = 1.5; vx.globalAlpha = 0.55; vx.beginPath(); let pen = false;
+      for (let i = f0; i <= f; i++) { if (!aliveAt(sel, i)) { pen = false; continue; } const x = SX(sel.x[i]), y = SY(sel.y[i]); if (pen) vx.lineTo(x, y); else vx.moveTo(x, y); pen = true; }
+      vx.stroke(); vx.globalAlpha = 1; vx.lineWidth = 1;
+    }
+    const d = det.get(sel.id);
+    if (p && p.alive && d) {
+      const goal = R.header.goals[d.goal];
+      if (!isNaN(d.dest[0])) { vx.strokeStyle = GOAL[goal] || '#fff'; vx.setLineDash([5, 5]); vx.beginPath(); vx.moveTo(SX(p.x), SY(p.y)); vx.lineTo(SX(d.dest[0]), SY(d.dest[1])); vx.stroke(); vx.setLineDash([]); cross(SX(d.dest[0]), SY(d.dest[1]), 6, GOAL[goal] || '#fff'); }
+      const camp = goal === 'Camp' ? lastFor(R.camps, sel, cur) : null;
+      if (camp) { const cx = SX(camp.x), cy = SY(camp.y), len = 40; vx.strokeStyle = GOAL.Camp; vx.globalAlpha = 0.8; vx.lineWidth = 2; vx.beginPath(); vx.moveTo(cx, cy); vx.lineTo(cx + Math.cos(camp.watch) * len, cy - Math.sin(camp.watch) * len); vx.stroke(); vx.lineWidth = 1; vx.globalAlpha = 1; }
+      const hunt = goal === 'Hunt' ? huntOf(sel, cur) : null;
+      if (hunt && hunt.via) { vx.strokeStyle = GOAL.Hunt; vx.globalAlpha = 0.6; vx.setLineDash([2, 4]); vx.beginPath(); vx.moveTo(SX(p.x), SY(p.y)); vx.lineTo(SX(hunt.via[0]), SY(hunt.via[1])); vx.lineTo(SX(hunt.x), SY(hunt.y)); vx.stroke(); vx.setLineDash([]); vx.globalAlpha = 1; vx.beginPath(); vx.arc(SX(hunt.via[0]), SY(hunt.via[1]), 4, 0, 7); vx.stroke(); }
+      if (!isNaN(d.steer[0])) { vx.fillStyle = '#e6e9ee'; vx.beginPath(); vx.arc(SX(d.steer[0]), SY(d.steer[1]), 2.5, 0, 7); vx.fill(); }
+      for (const tr of d.tracks) {
+        const state = R.header.track_states[tr.state], x = SX(tr.x), y = SY(tr.y);
+        vx.strokeStyle = state === 'Visible' ? '#ef4444' : state === 'Noticing' ? '#fbbf24' : '#9aa4b2';
+        vx.setLineDash(state === 'Visible' ? [] : [3, 4]); vx.globalAlpha = state === 'Lost' ? Math.max(0.25, 1 - tr.age / 12) : 0.9;
+        vx.beginPath(); vx.moveTo(SX(p.x), SY(p.y)); vx.lineTo(x, y); vx.stroke(); vx.setLineDash([]);
+        vx.beginPath(); vx.arc(x, y, size + 3, 0, 7); vx.stroke(); vx.globalAlpha = 1;
+      }
+      if (!isNaN(d.look[0])) { vx.strokeStyle = '#fff'; vx.globalAlpha = 0.8; const x = SX(d.look[0]), y = SY(d.look[1]); vx.beginPath(); vx.moveTo(x - 5, y); vx.lineTo(x + 5, y); vx.moveTo(x, y - 5); vx.lineTo(x, y + 5); vx.stroke(); vx.globalAlpha = 1; }
+    }
+  }
+
+  // shots and hits that just happened
+  for (let i = firstEventAfter(cur - 0.5); i < R.events.length && R.events[i].t <= cur; i++) {
+    const ev = R.events[i], age = cur - ev.t;
+    if (ev.kind === EV_SHOT && age < 0.12) {
+      const e = R.byId.get(ev.a); if (!e || !e.seen[ev.f]) continue;
+      const yaw = e.yaw[ev.f], len = 45;
+      vx.strokeStyle = '#fde68a'; vx.globalAlpha = 0.8 * (1 - age / 0.12); vx.beginPath(); vx.moveTo(SX(e.x[ev.f]), SY(e.y[ev.f])); vx.lineTo(SX(e.x[ev.f] + Math.cos(yaw) * len), SY(e.y[ev.f] + Math.sin(yaw) * len)); vx.stroke(); vx.globalAlpha = 1;
+    } else if (ev.kind === EV_DAMAGE) {
+      const e = R.byId.get(ev.a); if (!e || !e.seen[ev.f]) continue;
+      vx.strokeStyle = '#ef4444'; vx.globalAlpha = 1 - age / 0.5; vx.lineWidth = 2; vx.beginPath(); vx.arc(SX(e.x[ev.f]), SY(e.y[ev.f]), size + 3 + age * 16, 0, 7); vx.stroke(); vx.lineWidth = 1; vx.globalAlpha = 1;
+    }
+  }
+
+  for (const e of R.ents) {
+    const p = at(e, f, a); if (!p) continue;
+    const x = SX(p.x), y = SY(p.y);
+    if (x < -60 || y < -60 || x > vw + 60 || y > vh + 60) continue;
+    const colour = TEAM[e.team % TEAM.length];
+    if (e.kind !== 0) { vx.fillStyle = '#9aa4b2'; vx.fillRect(x - 3, y - 3, 6, 6); continue; }
+    // On a map with floors: faded when on the floor not being shown, ringed dark when on a lower floor.
+    const floor = floorOf(p.x, p.y, e.z[f]);
+    const faded = floor && opts.floor !== 'all' && floor !== opts.floor;
+    vx.globalAlpha = faded ? 0.22 : 1;
+    if (!p.alive) { vx.globalAlpha = 0.45; cross(x, y, size * 0.8, colour); vx.globalAlpha = 1; continue; }
+    if (opts.cones || e === sel) {
+      const fov = e.agent && e.agent.persona ? e.agent.persona.fov_half_angle : 0.9, r = (e === sel ? 28 : 12) * z;
+      vx.fillStyle = colour; vx.globalAlpha = e === sel ? 0.16 : 0.07; vx.beginPath(); vx.moveTo(x, y); vx.arc(x, y, Math.min(r, 260), -(p.yaw + fov), -(p.yaw - fov)); vx.closePath(); vx.fill(); vx.globalAlpha = 1;
+    }
+    vx.strokeStyle = colour; vx.lineWidth = 2; vx.beginPath(); vx.moveTo(x, y); vx.lineTo(x + Math.cos(p.yaw) * size * 2.1, y - Math.sin(p.yaw) * size * 2.1); vx.stroke(); vx.lineWidth = 1;
+    vx.fillStyle = colour; vx.beginPath(); vx.arc(x, y, size, 0, 7); vx.fill();
+    if (e.human) { vx.strokeStyle = '#fff'; vx.lineWidth = 1.5; vx.beginPath(); vx.arc(x, y, size + 2, 0, 7); vx.stroke(); vx.lineWidth = 1; }
+    if (e.bot) { const d = det.get(e.id); if (d) { vx.fillStyle = GOAL[R.header.goals[d.goal]] || '#888'; vx.beginPath(); vx.arc(x, y, size * 0.45, 0, 7); vx.fill(); } }
+    if (e === sel) { vx.strokeStyle = '#fff'; vx.setLineDash([3, 3]); vx.beginPath(); vx.arc(x, y, size + 6, 0, 7); vx.stroke(); vx.setLineDash([]); }
+    if (opts.names || e === sel) { vx.fillStyle = '#e6e9ee'; vx.fillText(e.name, x + size + 6, y - size - 2); }
+    if (floor === 'lower' && opts.floor === 'all') { vx.strokeStyle = '#1a1030'; vx.lineWidth = 2; vx.setLineDash([2, 2]); vx.beginPath(); vx.arc(x, y, size + 3, 0, 7); vx.stroke(); vx.setLineDash([]); vx.lineWidth = 1; }
+    vx.globalAlpha = 1;
+  }
+
+  // scale bar
+  const metres = [5, 10, 20, 50, 100, 200].find(v => v * z >= 60) || 500;
+  vx.strokeStyle = vx.fillStyle = '#8b95a3'; vx.beginPath(); vx.moveTo(12, vh - 14); vx.lineTo(12 + metres * z, vh - 14); vx.stroke(); vx.fillText(metres + ' m', 16 + metres * z, vh - 14);
+}
+
+function cross(x, y, r, colour) { vx.strokeStyle = colour; vx.lineWidth = 2; vx.beginPath(); vx.moveTo(x - r, y - r); vx.lineTo(x + r, y + r); vx.moveTo(x + r, y - r); vx.lineTo(x - r, y + r); vx.stroke(); vx.lineWidth = 1; }
+
+function firstEventAfter(time) {
+  let lo = 0, hi = R.events.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (R.events[mid].t < time) lo = mid + 1; else hi = mid; }
+  return lo;
+}
+
+function drawFeed() {
+  const feed = $('feed'); let html = '';
+  if (R) for (const ev of R.deaths) {
+    if (ev.t > cur || ev.t < cur - 6) continue;
+    const v = R.byId.get(ev.a), k = R.byId.get(ev.b);
+    const who = e => e ? `<span style="color:${TEAM[e.team % TEAM.length]}">${esc(e.name)}</span>` : 'someone';
+    html += `<div>${k && k !== v ? who(k) + ' killed ' + who(v) : who(v) + ' died'}</div>`;
+  }
+  if (feed.innerHTML !== html) feed.innerHTML = html;
+}
+
+// ---------- side panel ----------
+
+function sized(canvas) {
+  const w = canvas.clientWidth, h = canvas.clientHeight, r = devicePixelRatio;
+  if (canvas.width !== Math.round(w * r) || canvas.height !== Math.round(h * r)) { canvas.width = Math.round(w * r); canvas.height = Math.round(h * r); }
+  const g = canvas.getContext('2d'); g.setTransform(r, 0, 0, r, 0, 0); g.clearRect(0, 0, w, h);
+  return [g, w, h];
+}
+
+/** A strip chart of ±WINDOW seconds around now. lines: [{value: f => number, colour}], range [low, high], marks: values to rule and label. */
+function strip(canvas, lines, low, high, marks) {
+  const [g, w, h] = sized(canvas);
+  g.fillStyle = '#10151c'; g.fillRect(0, 0, w, h);
+  const X = t => (t - (cur - WINDOW)) / (2 * WINDOW) * w, Y = v => h - 3 - (Math.max(low, Math.min(high, v)) - low) / (high - low) * (h - 6);
+  g.font = '10px system-ui, sans-serif'; g.textBaseline = 'middle';
+  for (const mk of marks) { g.strokeStyle = mk === 0 ? '#3a4452' : '#232b36'; g.beginPath(); g.moveTo(0, Y(mk)); g.lineTo(w, Y(mk)); g.stroke(); g.fillStyle = '#6b7684'; g.fillText(String(mk), 3, Math.max(6, Math.min(h - 6, Y(mk) - 6))); }
+  const f0 = frameAtTime(cur - WINDOW), f1 = Math.min(R.F - 1, frameAtTime(cur + WINDOW) + 1);
+  for (const line of lines) {
+    g.strokeStyle = line.colour; g.lineWidth = line.width || 1.4; g.beginPath(); let pen = false;
+    for (let f = f0; f <= f1; f++) { const v = line.value(f); if (isNaN(v)) { pen = false; continue; } const x = X(R.t[f]), y = Y(v); if (pen) g.lineTo(x, y); else g.moveTo(x, y); pen = true; }
+    g.stroke();
+  }
+  g.strokeStyle = '#e6e9ee'; g.lineWidth = 1; g.globalAlpha = 0.6; g.beginPath(); g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.stroke(); g.globalAlpha = 1;
+  return { g, w, h, X, f0, f1 };
+}
+
+function stick(canvas, x, y, colour) {
+  if (!canvas) return;
+  const [g, w, h] = sized(canvas), r = w / 2 - 3, dead = (R.header.look ? R.header.look.deadzone : 0.1) * r;
+  g.strokeStyle = '#3a4452'; g.beginPath(); g.arc(w / 2, h / 2, r, 0, 7); g.stroke();
+  g.strokeStyle = '#232b36'; g.beginPath(); g.arc(w / 2, h / 2, dead, 0, 7); g.moveTo(w / 2 - r, h / 2); g.lineTo(w / 2 + r, h / 2); g.moveTo(w / 2, h / 2 - r); g.lineTo(w / 2, h / 2 + r); g.stroke();
+  g.fillStyle = colour; g.beginPath(); g.arc(w / 2 + x * r, h / 2 - y * r, 5, 0, 7); g.fill();
+}
+
+function histogram(e) {
+  if (!e) return null;
+  const list = e === 'people' ? R.players.filter(p => p.human) : e === 'bots' ? R.players.filter(p => p.bot && p !== sel) : [e];
+  const sum = new Float64Array(32); let total = 0;
+  for (const p of list) for (let i = 0; i < 32; i++) { sum[i] += p.stats.hist[i]; total += p.stats.hist[i]; }
+  if (total <= 0) return null;
+  for (let i = 0; i < 32; i++) sum[i] /= total;
+  return sum;
+}
+
+function drawHist() {
+  const [g, w, h] = sized($('cHist')), a = histogram(sel), b = histogram(cmp);
+  g.fillStyle = '#10151c'; g.fillRect(0, 0, w, h);
+  if (!a) return;
+  // square-root height, so the rare fast turns can be seen next to the common slow ones
+  const top = Math.sqrt(Math.max(...a, ...(b || [0]))), bw = (w - 8) / 32, base = h - 14, Y = v => base - Math.sqrt(v) / top * (base - 6);
+  g.fillStyle = '#6cb6ff'; for (let i = 0; i < 32; i++) g.fillRect(4 + i * bw + 1, Y(a[i]), bw - 2, base - Y(a[i]));
+  if (b) { g.strokeStyle = '#fbbf24'; g.lineWidth = 1.6; g.beginPath(); for (let i = 0; i < 32; i++) { const x = 4 + i * bw, y = Y(b[i]); if (i) g.lineTo(x, y); else g.moveTo(x, y); g.lineTo(x + bw, y); } g.stroke(); }
+  g.fillStyle = '#6b7684'; g.font = '10px system-ui, sans-serif'; g.textBaseline = 'alphabetic';
+  for (const v of [0, 100, 200, 300]) g.fillText(v === 300 ? '300+ °/s' : String(v), Math.min(w - 46, 4 + v / 10 * bw), h - 2);
+}
+
+function drawPanel() {
+  if (!R || !sel) return;
+  const f = frameAtTime(cur), k = span(half), look = R.header.look || { max_turn_deg_s: 220 }, move = R.header.move || { walk_ms: 4.2, sprint_ms: 6.5 };
+  const alive = aliveAt(sel, f), v = speedAt(sel, f, span(0.15)), w = turnAt(sel, f, k);
+  $('vState').textContent = !sel.seen[f] ? 'not in the match' : alive ? 'alive' : 'dead';
+  $('vState').style.color = alive ? '' : 'var(--bad)';
+  $('vHealth').textContent = sel.seen[f] ? Math.round(sel.health[f] / 254 * 100) + '%' : '–';
+  if ($('vFloor')) { const fl = sel.seen[f] ? floorOf(sel.x[f], sel.y[f], sel.z[f]) : null; $('vFloor').textContent = sel.seen[f] ? `${sel.z[f].toFixed(1)} m up${fl ? ', ' + fl + ' floor' : ''}` : '–'; }
+  $('vSpeed').textContent = isNaN(v) ? '–' : v.toFixed(1) + ' m/s';
+  $('vTurn').textContent = isNaN(w) ? '–' : Math.round(w) + ' °/s';
+  if (sel.bot) {
+    const d = details(f).get(sel.id), goal = d ? R.header.goals[d.goal] : 'None';
+    const hunt = goal === 'Hunt' ? huntOf(sel, cur) : null;
+    $('vGoal').textContent = alive ? (hunt ? (HUNT_TEXT[hunt.reason] || 'hunting') + (hunt.via ? ', round the side' : '') : GOAL_TEXT[goal] || goal) : '–'; $('vGoal').style.color = alive ? GOAL[goal] : '';
+    const target = d && d.target ? R.byId.get(d.target) : null;
+    $('vTarget').textContent = alive && target ? target.name : '–';
+    $('vTier').textContent = d ? R.header.tiers[d.tier].toLowerCase() : '–';
+    const role = lastFor(R.roles, sel, cur);
+    $('vRole').textContent = role ? (ROLE_TEXT[role.role] || role.role) + (role.site >= 0 ? `, objective ${role.site}` : '') : '–';
+    $('vAmmo').textContent = d ? d.ammo + ' rounds' : '';
+    stick($('pMove'), sel.mx[f] / 32767, sel.my[f] / 32767, '#4ade80');
+    stick($('pLook'), sel.lx[f] / 32767, sel.ly[f] / 32767, '#6cb6ff');
+    $('vHeld').innerHTML = (R.header.actions || []).map((name, i) => `<span class="chip${sel.held[f] & (1 << i) ? ' on' : ''}">${esc(name)}</span>`).join('');
+  }
+  const top = Math.max(240, look.max_turn_deg_s * 1.1);
+  const lines = [{ value: i => turnAt(sel, i, k), colour: '#6cb6ff' }];
+  if (sel.bot) lines.unshift({ value: i => aliveAt(sel, i) ? asked(sel, i) : NaN, colour: '#f59e0b', width: 1 });
+  strip($('cTurn'), lines, -top, top, [-look.max_turn_deg_s, 0, look.max_turn_deg_s]);
+  strip($('cSpeed'), [{ value: i => speedAt(sel, i, span(0.15)), colour: '#4ade80' }], 0, Math.max(8, move.sprint_ms * 1.15), [move.walk_ms, move.sprint_ms]);
+  if (sel.bot) {
+    const c = strip($('cStick'), [{ value: i => aliveAt(sel, i) ? sel.lx[i] / 32767 : NaN, colour: '#6cb6ff' }, { value: i => aliveAt(sel, i) ? sel.ly[i] / 32767 : NaN, colour: '#c084fc' }], -1, 1, [0]);
+    c.g.fillStyle = '#f87171';
+    for (let i = c.f0; i < c.f1; i++) if (aliveAt(sel, i) && (sel.held[i] & R.fireBit)) c.g.fillRect(c.X(R.t[i]), c.h - 5, Math.max(1, c.X(R.t[i + 1]) - c.X(R.t[i])), 4);
+  }
+  drawHist();
+}
+
+// ---------- timeline ----------
+
+function drawTimeline() {
+  const [g, w, h] = sized($('timeline'));
+  g.fillStyle = '#10151c'; g.fillRect(0, 0, w, h);
+  if (!R) return;
+  const X = t => t / R.duration * w;
+  if (sel) {
+    // when the selected player was alive, coloured by what a bot was doing
+    const stepF = Math.max(1, Math.floor(R.F / (w * 2)));
+    for (let f = 0; f < R.F; f += stepF) {
+      if (!aliveAt(sel, f)) continue;
+      g.fillStyle = sel.bot ? (GOAL[R.header.goals[sel.goal[f]]] || '#555') : '#4b5563';
+      g.fillRect(X(R.t[f]), h - 9, Math.max(1, X(R.t[Math.min(R.F - 1, f + stepF)]) - X(R.t[f])), 9);
+    }
+  }
+  for (const ev of R.deaths) {
+    const v = R.byId.get(ev.a), mine = sel && (ev.a === sel.id || ev.b === sel.id);
+    g.fillStyle = sel && ev.b === sel.id && ev.a !== sel.id ? '#4ade80' : sel && ev.a === sel.id ? '#f87171' : v ? TEAM[v.team % TEAM.length] : '#888';
+    g.globalAlpha = mine ? 1 : sel ? 0.35 : 0.8;
+    g.fillRect(X(ev.t) - 1, mine ? 2 : 8, 2, mine ? h - 13 : h - 19);
+  }
+  g.globalAlpha = 1; g.fillStyle = '#fff'; g.fillRect(X(cur) - 1, 0, 2, h);
+}
+
+// ---------- running ----------
+
+function resizeAll() {
+  const r = devicePixelRatio; vw = view.clientWidth; vh = view.clientHeight;
+  view.width = Math.round(vw * r); view.height = Math.round(vh * r); dirty = true;
+}
+
+function frame(stamp) {
+  const dt = Math.min(0.1, (stamp - lastStamp) / 1000); lastStamp = stamp;
+  if (R && playing) {
+    cur += dt * +$('rate').value;
+    if (cur >= R.duration) { cur = R.duration; playing = false; syncButtons(); }
+    dirty = true;
+  }
+  if (dirty) {
+    dirty = false;
+    drawMap(); drawFeed(); drawTimeline(); drawPanel();
+    if (R) $('clock').textContent = fmt(cur) + ' / ' + fmt(R.duration);
+    $('hint').textContent = R ? 'drag to move · wheel to zoom · click a player · space plays · ← → step' : '';
+  }
+  requestAnimationFrame(frame);
+}
+
+function seek(time) { if (!R) return; cur = Math.max(0, Math.min(R.duration, time)); dirty = true; }
+function stepFrames(n) { if (!R) return; playing = false; syncButtons(); const f = Math.max(0, Math.min(R.F - 1, frameAtTime(cur + 1e-6) + n)); seek(R.t[f]); }
+function syncButtons() {
+  $('play').textContent = playing ? 'Pause' : 'Play';
+  for (const [id, key] of [['tFollow', 'follow'], ['tCones', 'cones'], ['tNames', 'names'], ['tTrail', 'trail'], ['tPoints', 'points']]) $(id).classList.toggle('on', opts[key]);
+  $('tFloors').hidden = !(R && R.lower); $('tFloors').textContent = 'Floors: ' + opts.floor; $('tFloors').classList.toggle('on', opts.floor !== 'all');
+}
+function toggle(key) { opts[key] = !opts[key]; syncButtons(); dirty = true; }
+
+$('open').onclick = () => $('file').click();
+$('file').onchange = e => { const f = e.target.files[0]; if (f) openBlob(f, f.name); e.target.value = ''; };
+$('play').onclick = () => { if (!R) return; if (cur >= R.duration) cur = 0; playing = !playing; syncButtons(); };
+$('back').onclick = () => stepFrames(-1); $('fwd').onclick = () => stepFrames(1);
+$('tFloors').onclick = () => { if (!R || !R.lower) return; opts.floor = { all: 'upper', upper: 'lower', lower: 'all' }[opts.floor]; mapImage = buildMapImage(); syncButtons(); dirty = true; };
+$('tFollow').onclick = () => toggle('follow'); $('tCones').onclick = () => toggle('cones'); $('tNames').onclick = () => toggle('names'); $('tTrail').onclick = () => toggle('trail'); $('tPoints').onclick = () => toggle('points');
+$('fit').onclick = fit;
+$('smooth').onchange = e => { half = +e.target.value; dirty = true; };
+$('compare').onchange = e => { const v = e.target.value; cmp = v === '' ? null : v === 'people' || v === 'bots' ? v : R.byId.get(+v); $('lgCmp').textContent = e.target.selectedOptions[0].text; dirty = true; };
+
+const stage = $('stage'), drop = $('drop');
+addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+addEventListener('dragleave', () => drop.classList.remove('over'));
+addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); const f = e.dataTransfer.files[0]; if (f) openBlob(f, f.name); });
+
+let drag = null;
+view.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, moved: false }; view.setPointerCapture(e.pointerId); });
+view.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+  drag.moved = true; view.classList.add('dragging');
+  if (opts.follow) { opts.follow = false; syncButtons(); }
+  cam.x -= dx / cam.zoom; cam.y += dy / cam.zoom; drag.x = e.clientX; drag.y = e.clientY; dirty = true;
+});
+view.addEventListener('pointerup', e => {
+  view.classList.remove('dragging');
+  if (drag && !drag.moved && R) {
+    const box = view.getBoundingClientRect(), mx = e.clientX - box.left, my = e.clientY - box.top, f = frameAtTime(cur);
+    let best = null, bestD = 16;
+    for (const p of R.players) { if (!p.seen[f]) continue; const d = Math.hypot(SX(p.x[f]) - mx, SY(p.y[f]) - my); if (d < bestD) { bestD = d; best = p; } }
+    select(best);
+  }
+  drag = null;
+});
+view.addEventListener('wheel', e => {
+  e.preventDefault();
+  const box = view.getBoundingClientRect(), mx = e.clientX - box.left, my = e.clientY - box.top, wx = WX(mx), wy = WY(my);
+  cam.zoom = Math.max(0.2, Math.min(60, cam.zoom * Math.exp(-e.deltaY * 0.0015)));
+  if (!(opts.follow && sel)) { cam.x = wx - (mx - vw / 2) / cam.zoom; cam.y = wy + (my - vh / 2) / cam.zoom; }
+  dirty = true;
+}, { passive: false });
+
+const timeline = $('timeline'); let scrub = false;
+const scrubTo = e => { const box = timeline.getBoundingClientRect(); seek((e.clientX - box.left) / box.width * R.duration); };
+timeline.addEventListener('pointerdown', e => { if (!R) return; scrub = true; timeline.setPointerCapture(e.pointerId); scrubTo(e); });
+timeline.addEventListener('pointermove', e => { if (scrub) scrubTo(e); });
+timeline.addEventListener('pointerup', () => { scrub = false; });
+
+addEventListener('keydown', e => {
+  if (!R || e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); $('play').click(); }
+  else if (e.code === 'ArrowLeft') { e.preventDefault(); e.shiftKey ? seek(cur - 1) : stepFrames(-1); }
+  else if (e.code === 'ArrowRight') { e.preventDefault(); e.shiftKey ? seek(cur + 1) : stepFrames(1); }
+  else if (e.key === 'f') toggle('follow');
+  else if (e.key === 'n' || e.key === 'p') {
+    const list = [...$('rows').children].map(tr => R.byId.get(+tr.dataset.id)), i = list.indexOf(sel);
+    select(list[(i + (e.key === 'n' ? 1 : list.length - 1)) % list.length] || list[0]);
+  }
+});
+
+new ResizeObserver(resizeAll).observe(stage);
+resizeAll(); syncButtons(); requestAnimationFrame(frame);
+
+// Served over http, ?file=name.bbrec opens that file from the same folder as this page.
+const asked_for = new URLSearchParams(location.search).get('file');
+if (asked_for) fetch(asked_for).then(r => { if (!r.ok) throw new Error(asked_for + ': ' + r.status); return r.blob(); }).then(b => openBlob(b, asked_for.split('/').pop())).catch(e => { $('status').textContent = e.message; });
+</script>
+</body>
+</html>

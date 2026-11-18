@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../BotBrain.Protocol/BotBrain.Protocol.csproj" />
+    <ProjectReference Include="../BotBrain.Maps/BotBrain.Maps.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotBrain.Tests" />
+  </ItemGroup>
+</Project>

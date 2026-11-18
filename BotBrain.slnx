@@ -1,0 +1,9 @@
+<Solution>
+  <Project Path="BotBrain.Protocol/BotBrain.Protocol.csproj" />
+  <Project Path="BotBrain.Maps/BotBrain.Maps.csproj" />
+  <Project Path="BotBrain.Core/BotBrain.Core.csproj" />
+  <Project Path="BotBrain.Host/BotBrain.Host.csproj" />
+  <Project Path="BotBrain.Sandbox/BotBrain.Sandbox.csproj" />
+  <Project Path="BotBrain.MapTool/BotBrain.MapTool.csproj" />
+  <Project Path="BotBrain.Tests/BotBrain.Tests.csproj" />
+</Solution>

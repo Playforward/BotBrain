@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="BotBrain.Tests" />
+    <InternalsVisibleTo Include="Plugin.MagGameServer.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../BotBrain.Maps/BotBrain.Maps.csproj" />
+    <!-- Building navigation meshes (NavMeshBuild.cs): offline only, never shipped with the brain. zlib licence. -->
+    <PackageReference Include="DotRecast.Recast" Version="2026.3.1" />
+    <PackageReference Include="DotRecast.Recast.Toolset" Version="2026.3.1" />
+  </ItemGroup>
+</Project>
